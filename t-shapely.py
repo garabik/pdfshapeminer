@@ -4,6 +4,8 @@
 import sys, re, unicodedata
 from pprint import pprint
 
+import random
+
 from pdfminer.pdfdocument import PDFDocument, PDFNoOutlines
 from pdfminer.pdfparser import PDFParser
 from pdfminer.pdfinterp import PDFResourceManager, PDFPageInterpreter
@@ -13,14 +15,71 @@ from pdfminer.pdfpage import PDFPage
 
 
 from matplotlib import pyplot
-from shapely.geometry import box, MultiPolygon
-from descartes.patch import PolygonPatch
+import shapely.geometry
+#from descartes.patch import PolygonPatch
 
-SIZE = (10, 4)
 
-def plot_coords(ax, ob):
+class TBox:
+    "box with a text, the basic building block of text page with layout"
+    def __init__(self, x1, y1, x2, y2, text='', page_number=None):
+        self.text = text
+        self.page_number = page_number
+        self.box = shapely.geometry.box(x1, y1, x2, y2)
+        self.bounds = self.box.bounds
+        self.exterior = self.box.exterior
+
+    def union(self, other):
+        assert self.page_number == other.page_number
+        rtext = self.text+' '+other.text #FIXME test order by x
+        rbox = self.box.union(other.box)
+        x1, y1, x2, y2 = rbox.bounds
+        rtbox = TBox(x1, y1, x2, y2, rtext, self.page_number)
+        return rtbox
+
+    def __repr__(self):
+        x1, y1, x2, y2 = self.bounds
+        text = self.text
+        return u'TBox({x1}, {y1}, {x2}, {y2}, {text}'.format(**locals())
+
+    __str__ = __repr__
+
+SIZE = (20, 20)
+
+
+def plot_coords(ax, ob, color):
     x, y = ob.xy
-    ax.plot(x, y, 'o', color='#999999', zorder=1)
+#    ax.plot(x, y, 'b-', color=color, zorder=1)
+    ax.fill(x, y, color)
+
+
+def plotchunks(tchunks):
+    fig = pyplot.figure(1, figsize=SIZE, dpi=90)
+
+    ax = fig.add_subplot(121)
+
+    for tchunk in tchunks:
+        color = '#{:06X}'.format(random.randint(0,0xffffff))
+        for tbox in tchunk.tboxes:
+            plot_coords(ax, tbox.exterior, color)
+            xmin, ymin, xmax, ymax = tbox.bounds
+            ax.text(xmin, ymin, tbox.text, fontsize=6)
+
+            #patch = PolygonPatch(polygon, facecolor=v_color(True), edgecolor=v_color(True), alpha=0.5, zorder=2)
+            #ax.add_patch(patch)
+
+
+#    xrange = [0, 1000]
+#    yrange = [0, 1000]
+#    ax.set_xlim(*xrange)
+#    ax.set_xticks(range(*xrange) + [xrange[-1]])
+#    ax.set_ylim(*yrange)
+#    ax.set_yticks(range(*yrange) + [yrange[-1]])
+#    ax.set_aspect(1)
+
+    pyplot.show()
+
+
+
 
 import codecs
 sys.stdout = codecs.getwriter('utf-8')(sys.stdout)
@@ -38,9 +97,9 @@ def msgr(*s):
     msg('       \r')
 
 
-
 _lig_table = {
-        u'ﬁ': 'fi'
+        u'ﬁ': 'fi',
+        u'ﬂ': 'fl',
         }
 
 _lig_re = u'|'.join(lig for lig in _lig_table)
@@ -87,16 +146,14 @@ class PDFPageDetailedAggregator(PDFPageAggregator):
                         child_str += child.get_text()
                 child_str = ' '.join(child_str.split()).strip()
                 if child_str:
-#                    row = (page_number, item.bbox[0], item.bbox[1], item.bbox[2], item.bbox[3], child_str) # bbox == (x1, y1, x2, y2)
                     x1, y1, x2, y2 = item.bbox
-                    row = page_number, box(x1, y1, x2, y2), child_str
+                    row = TBox(x1, y1, x2, y2, child_str, page_number)
                     self.rows.append(row)
                 for child in item:
                     render(child, page_number)
             return
         render(ltpage, self.page_number)
         self.page_number += 1
-        self.rows = sorted(self.rows, key = lambda x: x[0])
         self.result = ltpage
 
 
@@ -114,114 +171,105 @@ laparams.line_margin = 0.9
 device = PDFPageDetailedAggregator(rsrcmgr, laparams=laparams)
 interpreter = PDFPageInterpreter(rsrcmgr, device)
 
-class TextBlock:
-    ''' textblock sa sklada z chunkov
+class TChunk:
+    "keeps a list of TBox'es and a corresponding shapely object as their union"
+    def __init__(self, tbox=None):
+        if tbox:
+            self.tboxes = [tbox]
+            self.page_number = tbox.page_number
+            self.polygon = tbox.box
 
-        chunk je: (polygon, text)
-    '''
-    def __init__(self, chunk=None):
-        if chunk:
-            self.chunks = [chunk]
-            bounds = chunk[0].bounds
+            bounds = tbox.bounds
             self.bottom = bounds[1]
-            self.left = self.mean_left = bounds[0]
+            self.left = bounds[0]
             self.top = bounds[3]
-            self.right = self.mean_right = bounds[2]
+            self.right = bounds[2]
             self.height = self.lineheight = self.top - self.bottom
             assert self.height > 0
             assert self.bottom < self.top and self.left < self.right
         else:
-            self.chunks = []
+            self.tboxes = []
+            self.page_number = None
             self.bottom = self.top = self.left = self.right = self.height = self.lineheigh = 0
 
-        # rows bude naplnene az po vytvoreni a zoskupeni vsetkych blokov, metodou create_rows
-        self.rows = []
+    def append(self, tbox):
+        if self.page_number is not None:
+            assert self.page_number == tbox.page_number
+        else:
+            self.page_number = tbox.page_number
+        self.tboxes.append(tbox)
+        self.polygon = self.polygon.union(tbox.box)
+        self.lineheight = sum(c.bounds[3]-c.bounds[1] for c in self.tboxes)/len(self.tboxes)
+        self.height = max(c.bounds[3] for c in self.tboxes) - min(c.bounds[1] for c in self.tboxes)
+        assert self.height > 0
+        if tbox.bounds[0] < self.left:
+            self.left = tbox.bounds[0]
+        if tbox.bounds[2] > self.right:
+            self.right = tbox.bounds[2]
+        if tbox.bounds[1] < self.bottom:
+            self.bottom = tbox.bounds[1]
+        if tbox.bounds[3] > self.top:
+            self.top = tbox.bounds[3]
+        assert self.bottom < self.top and self.left < self.right
+#        self.mean_left = sum(c[0] for c in self.chunks) / len(self)
+#        self.mean_right = sum(c[2] for c in self.chunks) / len(self)
+#        assert self.mean_left < self.mean_right
 
-    def get_rows(self):
-        rows = []
-        # najprv roztriedime podla y-ovej suradnice
-        chunks_by_y = {}
-        for c in self.chunks:
-            y1 = c[0].bounds[1]
-            if y1 in chunks_by_y:
-                chunks_by_y[y1].append(c)
+    def extend(self, tboxes):
+        for t in tboxes:
+            self.append(t)
+
+    def distance(self, other):
+        return self.polygon.distance(other.polygon)
+
+    def get_lines(self):
+        lines = []
+        # sort text boxes by their y coordinate first
+        boxes_by_y = {}
+        for tb in self.tboxes:
+            y1 = tb.bounds[1]
+            if y1 in boxes_by_y:
+                boxes_by_y[y1].append(tb)
             else:
-                chunks_by_y[y1] = [c]
+                boxes_by_y[y1] = [tb]
         # teraz zlucime chunky s podobnym y
-        keys = sorted(chunks_by_y.keys(), reverse=True)
+        keys = sorted(boxes_by_y.keys(), reverse=True)
         i = 0
         while i < len(keys)-1:
             # ak sa y-nova suradnica lisi menej nez o iste percento vysky riadku, povazujeme to za jeden riadok
             if abs(keys[i] - keys[i+1]) / self.lineheight < 0.1: #FIXME parameter
                 y1 = keys[i]
                 y2 = keys[i+1] # y-ova suradnica druheho chunku
-                chunks_by_y[y1].extend(chunks_by_y[y2])
-                del chunks_by_y[y2]
+                boxes_by_y[y1].extend(boxes_by_y[y2])
+                del boxes_by_y[y2]
                 del keys[i+1]
             i += 1
         for k in keys:
-            chunks = chunks_by_y[k] # all the chunks within one line
+            boxes_at_line = boxes_by_y[k] # all the boxes within one line
 #            chunks_by_y[k].sort() # podla x-ovej suradnice
-            chunks_by_y[k].sort(key=lambda x: x[0].bounds[0])
+            boxes_by_y[k].sort(key=lambda x: x.bounds[0])
             # get bouding box of the line
-            row = chunks[0][0]
-            text = chunks[0][1]
-            for i in range(1, len(chunks)):
-                row = row.union(chunks[i][0])
-                text += ' '+chunks[i][1]
-            rows.append( (row, text) )
-#            x1 = min(chunk[0] for chunk in chunks)
-#            x2 = min(chunk[2] for chunk in chunks)
-#            y1 = min(chunk[1] for chunk in chunks)
-#            y2 = min(chunk[3] for chunk in chunks)
-#            text = ' '.join(c[4] for c in chunks) 
-#            rows.append( (x1, y1, x2, y2, text) )
-        return rows
+            line = boxes_at_line[0]
+            for i in range(1, len(boxes_at_line)):
+                line = line.union(boxes_at_line[i])
+            lines.append(line)
+        return lines
 
-    def get_text_box(self):
-        # text box is (box, text)
-        rows = self.get_rows()
-        x1 = min(row[0].bounds[0] for row in rows)
-        x2 = min(row[0].bounds[2] for row in rows)
-        y1 = min(row[0].bounds[1] for row in rows)
-        y2 = min(row[0].bounds[3] for row in rows)
-        text = '\n'.join(row[1] for row in rows) 
+    def get_text(self):
+        lines = self.get_lines()
+        textlines = (x.text for x in lines)
+        text = '\n'.join(textlines) 
         text = fixlig(text)
         text = fixhyp(text)
-        return box(x1, y1, x2, y2), text
+        return text
 
-
-    def append(self, chunk):
-        self.chunks.append(chunk)
-        g, t = chunk
-        self.lineheight = sum(c[0].bounds[3]-c[0].bounds[1] for c in self.chunks)/len(self.chunks)
-        self.height = max(c[0].bounds[3] for c in self.chunks) - min(c[0].bounds[1] for c in self.chunks)
-        assert self.height > 0
-        if g.bounds[0] < self.left:
-            self.left = g.bounds[0]
-        if g.bounds[2] > self.right:
-            self.right = g.bounds[2]
-        if g.bounds[1] < self.bottom:
-            self.bottom = g.bounds[1]
-        if g.bounds[3] > self.top:
-            self.top = g.bounds[3]
-        assert self.bottom < self.top and self.left < self.right
-#        self.mean_left = sum(c[0] for c in self.chunks) / len(self)
-#        self.mean_right = sum(c[2] for c in self.chunks) / len(self)
-#        assert self.mean_left < self.mean_right
-
-    def extend(self, chunks):
-        for c in chunks:
-            self.append(c)
 
     def __len__(self):
-        return len(self.chunks)
+        return len(self.tboxes)
 
     def __repr__(self):
-        return 'L:'+str(self.lineheight)+'; '.join(str(c) for c in self.chunks)
+        return 'L:'+str(self.lineheight)+'; '.join(str(c) for c in self.tboxes)
 
-    def __str__(self):
-        return u'ML{ml:4.1f} MR{mr:4.1f} H{h:5.2f} B{bottom:5.1f} {r}'.format(ml=self.mean_left, mr=self.mean_right, h=self.lineheight, bottom=self.bottom, r='; '.join(c[1] for c in self.chunks))
 
 # rozdiel vo vyskach riadkov (relativny), pri ktorych povazujeme font za rovnaky
 line_height_diff = 0.1
@@ -230,53 +278,81 @@ line_height_diff = 0.1
 # riadky za patriace tomu istemu odseku
 max_line_spread = 1.2
 
+text_chunks = []
 
+pagenumber = 0
 for page in PDFPage.create_pages(doc):
+    print '@@@ PG:', pagenumber
+    if pagenumber == 5:
+        break
     interpreter.process_page(page)
     # receive the LTPage object for this page
-    device.get_result()
-    text_blocks = []
-    for row in device.rows:
-        page, polygon, text = row
-        text_blocks.append( TextBlock( (polygon, text) ) )
-
-    msgn('got results, chunks:', len(device.rows), len(text_blocks))
+    pagenumber += 1
 
 
+device.get_result()
+for row in device.rows:
+    text_chunks.append( TChunk(row) )
+
+msgn('got results, chunks:', len(device.rows), len(text_chunks))
+
+text_chunks_by_pg = {}
+for tc in text_chunks:
+    pg = tc.page_number
+    if pg in text_chunks_by_pg:
+        text_chunks_by_pg[pg].append(tc)
+    else:
+        text_chunks_by_pg[pg] = [tc]
+
+pages = sorted(text_chunks_by_pg.keys())
+
+del text_chunks
+
+for page in pages:
+    text_chunks = text_chunks_by_pg[page]
+    print '@@@PG:', page,len(text_chunks)
     reduced = True
     while reduced:
         msgn('\n---')
         reduced = False
         i = 0
-        while i < len(text_blocks):
-            block1 = text_blocks[i]
+        while i < len(text_chunks):
+            chunk1 = text_chunks[i]
             j = i
-            while j < len(text_blocks):
-                msgr(i, j, len(text_blocks))
-                block2 = text_blocks[j]
-                # o kolko mozu byt bloky od seba v absolutnej hodnote, aby to este nebolo chapane ako prazdny riadok
-                mls = (max_line_spread - 1) * (block1.lineheight + block2.lineheight) / 2
+            while j < len(text_chunks):
+                msgr(i, j, len(text_chunks))
+                chunk2 = text_chunks[j]
+                assert chunk1.page_number == chunk2.page_number
+                # o kolko mozu byt bloky od seba vertikalne v absolutnej hodnote, aby to este nebolo chapane ako prazdny riadok
+                mls = (max_line_spread - 1) * (chunk1.lineheight + chunk2.lineheight) / 2
+                mcs = 0.3*(chunk1.lineheight + chunk2.lineheight) / 2
                 if (
                     (i!=j) and  
                     # riadky maju podobnu vysku
-                    abs(block1.lineheight - block2.lineheight) / ((block1.lineheight + block2.lineheight)/2) < line_height_diff and
+                    abs(chunk1.lineheight - chunk2.lineheight) / ((chunk1.lineheight + chunk2.lineheight)/2) < line_height_diff and
                     # bloky sa vertikalne prekryvaju alebo su blizko k sebe
                     (
-                        (block2.bottom-mls <= block1.bottom <= block2.top+mls) or (block1.bottom-mls <= block2.bottom <= block1.top+mls)
+                        (chunk2.bottom-mls <= chunk1.bottom <= chunk2.top+mls) or (chunk1.bottom-mls <= chunk2.bottom <= chunk1.top+mls)
                     ) and
+                    ( 
+                        chunk1.distance(chunk2) < mcs
+                    ) and
+                    
                     # bloky sa horizontalne prekryvaju
-                    ( (block2.left <= block1.left <= block2.right) or (block1.left <= block2.left <= block1.right) )
+                    ( (chunk2.left <= chunk1.left <= chunk2.right) or (chunk1.left <= chunk2.left <= chunk1.right) )
                     ):
-                    block1.extend(block2.chunks)
-                    del text_blocks[j]
+                    chunk1.extend(chunk2.tboxes)
+                    del text_chunks[j]
                     reduced = True
                 else:
                     j += 1
             i += 1
 
-#    pprint(text_blocks)
-    for block in text_blocks:
-#    print (block.__str__())
-        print(block.get_text_box()[1])
-        print '========'
-    sys.exit()
+
+    for tc in text_chunks:
+        print (tc.get_text())
+        print '@@@'
+    plotchunks(text_chunks)
+
+
+
