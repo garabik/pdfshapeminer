@@ -170,10 +170,53 @@ class ShapedTextBox:
         avg = sum(abs(c.y1-c.y0) for c in self.textlines)/len(self.textlines)
         return avg
 
+    def sort_textlines(self):
+        sorted_lines = []
+        # sort text lines by their y coordinate first
+        tlines_by_y = {}
+        for tl in self.textlines:
+            y0 = tl.y0
+            if y0 in tlines_by_y:
+                tlines_by_y[y0].append(tl)
+            else:
+                tlines_by_y[y0] = [tl]
+        # teraz zlucime lines s podobnym y
+        keys = sorted(tlines_by_y.keys(), reverse=True)
+        i = 0
+        lineheight = self.avg_lineheight()
+        while i < len(keys)-1:
+            # ak sa y-nova suradnica lisi menej nez o iste percento vysky riadku, povazujeme to za jeden riadok
+            if abs(keys[i] - keys[i+1]) / lineheight < 0.1: #FIXME parameter
+                y1 = keys[i]
+                y2 = keys[i+1] # y-ova suradnica druheho chunku
+                tlines_by_y[y1].extend(tlines_by_y[y2])
+                del tlines_by_y[y2]
+                del keys[i+1]
+            i += 1
+
+        keys = sorted(tlines_by_y.keys(), reverse=True)
+        for k in keys:
+            tlines_at_line = tlines_by_y[k] # all the tlines within one line
+#            chunks_by_y[k].sort() # podla x-ovej suradnice
+            tlines_by_y[k].sort(key=lambda x: x.x0)
+            # get bouding box of the line
+            line = tlines_at_line[0]
+            for i in range(1, len(tlines_at_line)):
+                #line = line.union(tlines_at_line[i])
+                line.add(tlines_at_line[i])
+            sorted_lines.append(line)
+
+#        pprint(sorted_lines)
+#        sorted_lines = sorted(sorted_lines, key=lambda x:-x[1])
+#        sorted_lines = [x[0] for x in sorted_lines]
+        self.textlines = sorted_lines
+
     def get_text(self):
         txt = ''.join(x.get_text() for x in self.textlines)
         txt = fixlig(txt)
         txt = fixhyp(txt)
+        if self.heading:
+            txt = options.heading_before + txt + options.heading_after
         return txt
 
     def __repr__(self):
@@ -257,6 +300,8 @@ class TextBlock:
         for chain in chains:
             for tc in chain:
                 sorted_tboxes.append(tc)
+        for box in sorted_tboxes:
+            box.sort_textlines()
         self.textboxes = sorted_tboxes
 
     def stats(self):
@@ -270,6 +315,7 @@ class TextBlock:
         return nrchunks, avgwidth, stdevwidth, avgheight, stdevheight
 
     def get_text(self):
+        r = ''
         return u'\n¶\n'.join(x.get_text() for x in self.textboxes)
 
     def __str__(self):
@@ -360,7 +406,7 @@ class ShapeTextConverter(TextConverter):
     def paint_path(self, gstate, stroke, fill, evenodd, path):
         return
 
-
+'''
 def get_next_textline(textline, leftover):
     "find the nearest most appropriate textline from the list leftover"
     threshold = 0.5 # consider only chunks closer vertically than this (ratio of downward candidate text height)
@@ -375,7 +421,7 @@ def get_next_textline(textline, leftover):
         topmost = max(candidates_rightto, key=lambda x:x.shape.bounds[1])
         return topmost
     return None
-
+'''
 
 def get_text_boxes(textlines):
     # convert all textlines to textboxes
@@ -429,8 +475,7 @@ def get_text_boxes(textlines):
 
     return textboxes
 
-
-def get_avg_linegeight(text_boxes):
+def get_avg_lineheight(text_boxes):
     "calculate average line height"
     sum_lh = 0
     sum_chars = 0
@@ -444,7 +489,7 @@ def get_avg_linegeight(text_boxes):
 
 
 def get_text_blocks(text_boxes):
-    avg_lineheight = get_avg_linegeight(text_boxes)
+    avg_lineheight = get_avg_lineheight(text_boxes)
     article_blocks = []
     text_boxes_in_article_blocks = set() # keep track of already assigned text boxes
     i = 0
@@ -700,6 +745,17 @@ def main(argv):
                        type=float,
                        default=0.1,
                        help='Two lines whose vertical sizes differ more than this ratio are not to be considered of the same paragraph (but e.g. one of them is a heading).')
+
+    parser.add_argument('--heading-before', dest='heading_before', action='store',
+                       type=str,
+                       default='',
+                       help='String to put before each heading, e.g. <h1>')
+
+    parser.add_argument('--heading-after', dest='heading_after', action='store',
+                       type=str,
+                       default='',
+                       help='String to put after each heading, e.g. </h1>')
+
 
 
     args, rest = parser.parse_known_args()
