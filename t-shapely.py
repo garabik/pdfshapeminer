@@ -57,6 +57,9 @@ class TBox:
         self.box = shapely.geometry.box(x1, y1, x2, y2)
         self.bounds = self.box.bounds
         self.exterior = self.box.exterior
+        width = self.bounds[2] - self.bounds[0]
+        avg_chw = len(text)/float(width)
+        print('fasz', len(text), avg_chw, self.bounds[3]-self.bounds[1], text)
 
     def union(self, other):
         assert self.page_number == other.page_number
