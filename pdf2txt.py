@@ -5,7 +5,7 @@ from __future__ import print_function
 
 import sys
 from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
-import random, copy
+import random, copy, re, unicodedata
 from math import atan2, pi
 
 from pprint import pprint
@@ -98,6 +98,37 @@ def plottextblocks(blocks):
 
     pyplot.show()
 
+_lig_table = {
+        u'ﬁ': 'fi',
+        u'ﬂ': 'fl',
+        }
+
+_lig_re = u'|'.join(lig for lig in _lig_table)
+_lig_re = u'({ligs}) '.format(ligs = _lig_re)
+
+def fixlig(txt):
+    "fix ligatures"
+    r = re.sub(_lig_re, lambda x: _lig_table[x.group(1)], txt)
+    return r
+
+def is_lowercase(c):
+    "test if text is lowercase"
+    return c.upper() != c
+
+def is_letter(c):
+    return unicodedata.category(c)[0] in 'L'
+
+def fixhyp(txt):
+    lines = txt.splitlines()
+    newlines = [lines[0]]
+    for l in lines[1:]:
+        prevline = newlines[-1]
+        if prevline.endswith('-') and len(prevline)>=2 and is_letter(prevline[-2]) and (l and is_lowercase(l[0])):
+            newlines[-1] = prevline[:-1] + l
+        else:
+            newlines.append(l)
+    return '\n'.join(newlines)
+
 def isclose(a,b, atol=1e-05, rtol=1e-05):
     'test if two floats are "close"'
     "follows numpy.isclose"
@@ -140,7 +171,10 @@ class ShapedTextBox:
         return avg
 
     def get_text(self):
-        return self.textlines[0].get_text()
+        txt = ''.join(x.get_text() for x in self.textlines)
+        txt = fixlig(txt)
+        txt = fixhyp(txt)
+        return txt
 
     def __repr__(self):
         return ('<%s(%s)>' %
@@ -181,7 +215,7 @@ class TextBlock:
     def get_next_tbox(self, tbox, leftover):
         "find the nearest most appropriate text chunk from the list leftover"
         threshold = 0.5 # consider only chunks closer vertically than this (ratio of downward candidate text height)
-        candidates = (x for x in leftover if tbox.shape.stance(x)<x.avg_lineheight()*threshold)
+        candidates = (x for x in leftover if tbox.shape.distance(x.shape)<x.avg_lineheight()*threshold)
         candidates_below = [x for x in candidates if tbox.shape.bounds[1]>x.shape.bounds[1]]
         #pprint(candidates_below)
         if candidates_below:
@@ -208,7 +242,6 @@ class TextBlock:
                 chain = [diamost]
                 del leftover[leftover.index(diamost)]
             while True:
-#                print 'ch-1', chain[-1]
                 nxt = self.get_next_tbox(chain[-1], leftover)
                 if nxt:
                     chain.append(nxt)
@@ -220,7 +253,7 @@ class TextBlock:
         # now sort chains by their first textbox diagonal position
         chains = sorted(chains, key=lambda x:-x[0].shape.bounds[3]+x[0].shape.bounds[0])
 
-        sorted_chunks = []
+        sorted_tboxes = []
         for chain in chains:
             for tc in chain:
                 sorted_tboxes.append(tc)
@@ -237,10 +270,14 @@ class TextBlock:
         return nrchunks, avgwidth, stdevwidth, avgheight, stdevheight
 
     def get_text(self):
-        return '\n¶\n'.join(x.get_text() for x in self.textboxes)
+        return u'\n¶\n'.join(x.get_text() for x in self.textboxes)
 
     def __str__(self):
-        return '\n¶\n'.join(str(x) for x in self.textboxes)
+        return u'\n¶\n'.join(str(x) for x in self.textboxes)
+
+    def __repr__(self):
+        return '\n¶\n'.join(repr(x) for x in self.textboxes)
+
 
 class ShapeTextConverter(TextConverter):
 
@@ -406,7 +443,7 @@ def get_avg_linegeight(text_boxes):
     return avg
 
 
-def get_article_blocks(text_boxes):
+def get_text_blocks(text_boxes):
     avg_lineheight = get_avg_linegeight(text_boxes)
     article_blocks = []
     text_boxes_in_article_blocks = set() # keep track of already assigned text boxes
@@ -414,7 +451,7 @@ def get_article_blocks(text_boxes):
     text_boxes_c = copy.copy(text_boxes)
     while i < len(text_boxes_c):
         tc = text_boxes_c[i]
-        if tc.avg_lineheight() > avg_lineheight *1.5:
+        if tc.avg_lineheight() > avg_lineheight * 1.5:
             tc.heading = True
             a = TextBlock()
             a.append(tc)
@@ -435,7 +472,7 @@ def get_article_blocks(text_boxes):
 
     while text_boxes_remaining:
         msg('.')
-        # now, add to each ArticleBlock everything that is below, until another heading is encountered
+        # now, add to each TextBlock everything that is below, until another heading is encountered
 
         text_boxes_remaining.sort(key=lambda x: -x.shape.bounds[1]) # sort by bottom coordinate
         for ab in process_article_blocks:
@@ -452,7 +489,7 @@ def get_article_blocks(text_boxes):
                         i += 1
                         continue
                     if tc.shape.intersects(newbox):
-                        if tc.avg_lineheight() > avg_lineheight *1.5:
+                        if tc.avg_lineheight() > avg_lineheight * 1.5:
                             tc.heading = True
                             # new header enountered, stop here
                             bottom = -1 # signal end of LOOP #1
@@ -480,7 +517,7 @@ def get_article_blocks(text_boxes):
             assert tc_width > 0
             assert leftmost_width > 0
 
-            # if the new chunk is more than 10% of the smaller of (new_chunk, old_chunk) from
+            # if the new box is more than 10% of the smaller of (new_box, old_box) from
             # the old position, let it be the leftmost one
             if tc.shape.bounds[0] < leftmost.shape.bounds[0] - 0.1*min(tc_width, leftmost_width):
                 leftmost = tc
@@ -495,8 +532,18 @@ def get_article_blocks(text_boxes):
         a.append(leftmost)
         article_blocks.append(a)
         text_boxes_in_article_blocks.add(leftmost)
+    msg('!')
+    for text_block in article_blocks:
+        msg('.')
+        text_block.sort_tboxes()
     msgn('!')
+#    pprint(article_blocks)
     return article_blocks
+
+def print_text_blocks(text_blocks):
+    for block in text_blocks:
+        print('======')
+        print(block.get_text())
 
 # main
 def main(argv):
@@ -744,13 +791,14 @@ def main(argv):
     device.close()
     textboxes = get_text_boxes(device.textlines)
 
-    textblocks = get_article_blocks(textboxes)
+    textblocks = get_text_blocks(textboxes)
     if args.draw_lines:
         plotitems(device.textlines)
     if args.draw_boxes:
         plottextboxes(textboxes)
     if args.draw_blocks:
         plottextblocks(textblocks)
+    print_text_blocks(textblocks)
     outfp.close()
     return
 
