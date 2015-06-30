@@ -587,7 +587,7 @@ def get_text_blocks(text_boxes):
 
 def print_text_blocks(text_blocks):
     for block in text_blocks:
-        print('======')
+        print(options.block_separator)
         print(block.get_text())
 
 # main
@@ -756,6 +756,11 @@ def main(argv):
                        default='',
                        help='String to put after each heading, e.g. </h1>')
 
+    parser.add_argument('--block-separator', dest='block_separator', action='store',
+                       type=str,
+                       default=r'\n',
+                       help=r'Separate blocks with this string. Use \n for new line, other escape sequences are not recognized.')
+
 
 
     args, rest = parser.parse_known_args()
@@ -794,6 +799,8 @@ def main(argv):
     outtype = args.outtype
     codec = args.codec
     scale = args.scale
+
+    args.block_separator = args.block_separator.replace(r'\n', '\n')
 
     global options
     options = args
