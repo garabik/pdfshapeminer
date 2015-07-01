@@ -6,7 +6,7 @@ from __future__ import print_function
 import sys
 from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 import random, copy, re, unicodedata
-from math import atan2, pi
+from math import atan2, pi, sqrt, fsum
 
 from pprint import pprint
 
@@ -34,17 +34,23 @@ def DEBUG(level, *msg, **args):
         print(*msg, file=sys.stderr, end=end)
         sys.stderr.flush()
 
-def msg(*s):
-    r = ' '.join(str(x) for x in s)
-    sys.stderr.write(r); sys.stderr.flush()
+def msg(*s, **kw):
+    least_debug = kw.get('least_debug', 0)
+    if debuglevel >= least_debug:
+        r = ' '.join(str(x) for x in s)
+        sys.stderr.write(r); sys.stderr.flush()
 
-def msgn(*s):
-    msg(*s)
-    msg('\n')
+def msgn(*s, **kw):
+    least_debug = kw.get('least_debug', 0)
+    if debuglevel >= least_debug:
+        msg(*s)
+        msg('\n')
 
-def msgr(*s):
-    msg(*s)
-    msg('       \r')
+def msgr(*s, **kw):
+    least_debug = kw.get('least_debug', 0)
+    if debuglevel >= least_debug:
+        msg(*s)
+        msg('       \r')
 
 
 SIZE = (20, 20)
@@ -113,7 +119,12 @@ def fixlig(txt):
 
 def is_lowercase(c):
     "test if text is lowercase"
-    return c.upper() != c
+    return c.lower() == c
+
+def is_uppercase(c):
+    "test if text is uppercase"
+    return c.upper() == c
+
 
 def is_letter(c):
     return unicodedata.category(c)[0] in 'L'
@@ -170,6 +181,18 @@ class ShapedTextBox:
         avg = sum(abs(c.y1-c.y0) for c in self.textlines)/len(self.textlines)
         return avg
 
+    def avg_charwidth(self):
+        "average width of a character"
+        s_width = 0
+        s_chars = 0
+        for tline in self.textlines:
+            nchars = len(tline.get_text())
+            width = abs(tline.x1-tline.x0)
+            s_width += width
+            s_chars += nchars
+        avg = s_width/s_chars
+        return avg
+
     def sort_textlines(self):
         sorted_lines = []
         # sort text lines by their y coordinate first
@@ -211,10 +234,62 @@ class ShapedTextBox:
 #        sorted_lines = [x[0] for x in sorted_lines]
         self.textlines = sorted_lines
 
+    def _is_indented(self, i):
+        "try to detect if the line with the index i is indented"
+        "call this method after the lines have been sorted by self.sort_textlines"
+        tline = self.textlines[i]
+        text = tline.get_text()
+        if not is_uppercase(text[0]):
+            return False
+        lineheight = abs(tline.y1 - tline.y0)
+        linewidth = abs(tline.x1 - tline.x0)
+
+        neighbours = [l for l in self.textlines[i-2:i]+self.textlines[i+1:i+3] if abs(l.y0-tline.y0) < lineheight*3]
+        if not neighbours:
+            return False
+        # calculate mean and variance
+        data = [tline.x0-l.x0 for l in neighbours]
+        sumx0 = fsum(data)
+        n = len(neighbours)
+        ss = sum(x**2 for x in data) - (sumx0**2)/n
+        if n==1:
+#            print('111', tline.get_text())
+            return False
+        var = ss/(n-1)
+        if isclose(var, 0):
+            var = 0
+        stdevx0 = sqrt(var)
+        mean_indent = sumx0/n
+        charwidth = linewidth/len(text)
+        if stdevx0 <= 0.5*mean_indent and mean_indent > options.indent_limit:
+            return True
+        return False
+        #print('fff', mean, stdevx0, tline.get_text())
+
     def get_text(self):
-        txt = ''.join(x.get_text() for x in self.textlines)
-        txt = fixlig(txt)
-        txt = fixhyp(txt)
+        paragraphs = []
+        paragraph = ''
+        for i, tline in enumerate(self.textlines):
+            if self._is_indented(i):
+                if paragraph:
+                    p = fixhyp(
+                            fixlig(paragraph)
+                            )
+                    if options.norm_whitespace:
+                        p = ' '.join(p.split())
+                    paragraphs.append(p)
+                paragraph = ''
+            paragraph += tline.get_text()
+        if paragraph:
+            p = fixhyp(
+                    fixlig(paragraph)
+                    )
+            if options.norm_whitespace:
+                p = ' '.join(p.split())
+            paragraphs.append(p)
+
+        txt = options.indent_separator.join(paragraphs)
+
         if self.heading:
             txt = options.heading_before + txt + options.heading_after
         return txt
@@ -316,7 +391,7 @@ class TextBlock:
 
     def get_text(self):
         r = ''
-        return u'\n¶\n'.join(x.get_text() for x in self.textboxes)
+        return options.box_separator.join(x.get_text() for x in self.textboxes)
 
     def __str__(self):
         return u'\n¶\n'.join(str(x) for x in self.textboxes)
@@ -344,8 +419,7 @@ class ShapeTextConverter(TextConverter):
             reject = False
             r = ''
             if isinstance(item, LTTextLine):
-                if debuglevel >= 1:
-                    msg('.')
+                msg('.', least_debug=2)
                 linestr = ''
                 reject = False
                 for child in item:
@@ -390,7 +464,7 @@ class ShapeTextConverter(TextConverter):
         if self.showpageno:
             self.write_text('Page %s\n' % ltpage.pageid)
         render(ltpage)
-        msgn()
+        msgn(least_debug=2)
         self.write_text('\f')
         return
 
@@ -406,22 +480,6 @@ class ShapeTextConverter(TextConverter):
     def paint_path(self, gstate, stroke, fill, evenodd, path):
         return
 
-'''
-def get_next_textline(textline, leftover):
-    "find the nearest most appropriate textline from the list leftover"
-    threshold = 0.5 # consider only chunks closer vertically than this (ratio of downward candidate text height)
-    candidates = (x for x in leftover if x != textline and  textline.shape.distance(x.shape)<abs(x.shape.bounds[3]-x.shape.bounds[1])*threshold)
-    candidates_below = [x for x in candidates if textline.shape.bounds[1]>x.shape.bounds[1]]
-    #pprint(candidates_below)
-    if candidates_below:
-        leftmost = min(candidates_below, key=lambda x:x.shape.bounds[0])
-        return leftmost
-    candidates_rightto = [x for x in candidates if textline.shape.bounds[0]<x.shape.bounds[0]]
-    if candidates_rightto:
-        topmost = max(candidates_rightto, key=lambda x:x.shape.bounds[1])
-        return topmost
-    return None
-'''
 
 def get_text_boxes(textlines):
     # convert all textlines to textboxes
@@ -436,7 +494,7 @@ def get_text_boxes(textlines):
             j = i
             while j < len(textboxes):
                 if debuglevel >= 2:
-                    msgr(i, j, len(textboxes))
+                    msgr(i, j, len(textboxes), least_debug=2)
 #                print(i, j, len(textboxes))
                 #pprint(textboxes)
                 box2 = textboxes[j]
@@ -445,9 +503,12 @@ def get_text_boxes(textlines):
                 lineheight1 = box1.avg_lineheight()
                 lineheight2 = box2.avg_lineheight()
 
+                charwidth1 = box1.avg_charwidth()
+                charwidth2 = box2.avg_charwidth()
+
                 # o kolko mozu byt riadky od seba vertikalne v absolutnej hodnote, aby to este nebolo chapane ako prazdny riadok
                 mls = options.line_margin * (lineheight1 + lineheight2) / 2
-#                mcs = options.max_char_spread*(lineheight1 + lineheight2) / 2
+                mcs = options.char_margin * (charwidth1 + charwidth2) / 2
                 if (
                     (i!=j) and
                     # riadky maju podobnu vysku
@@ -456,9 +517,9 @@ def get_text_boxes(textlines):
                     (
                         (bottom2-mls <= bottom1 <= top2+mls) or (bottom1-mls <= bottom2 <= top1+mls)
                     ) and
-#                    (
-#                        box1.shape.distance(box2.shape) < mcs
-#                    ) and
+                    (
+                        box1.shape.distance(box2.shape) < mcs
+                    ) and
 
                     # bloky sa horizontalne prekryvaju
                     ( (left2 <= left1 <= right2) or (left1 <= left2 <= right1) )
@@ -470,7 +531,7 @@ def get_text_boxes(textlines):
                     j += 1
             i += 1
         if debuglevel>=2:
-            msgn('')
+            msgn(least_debug=2)
     textboxes = sorted(textboxes, key=lambda x:x.shape.bounds[3], reverse=True)
 
     return textboxes
@@ -503,20 +564,20 @@ def get_text_blocks(text_boxes):
             text_boxes_in_article_blocks.add(tc)
             del text_boxes_c[i]
             article_blocks.append(a)
-            msg('.')
+            msg('.', least_debug=1)
         else:
             tc.heading = False
             i += 1
 
 
-    msg('!')
+    msg('!', least_debug=1)
     process_article_blocks = copy.copy(article_blocks)
 
     text_boxes_remaining = set(text_boxes)
     text_boxes_remaining = list(text_boxes_remaining)
 
     while text_boxes_remaining:
-        msg('.')
+        msg('.', least_debug=1)
         # now, add to each TextBlock everything that is below, until another heading is encountered
 
         text_boxes_remaining.sort(key=lambda x: -x.shape.bounds[1]) # sort by bottom coordinate
@@ -577,11 +638,11 @@ def get_text_blocks(text_boxes):
         a.append(leftmost)
         article_blocks.append(a)
         text_boxes_in_article_blocks.add(leftmost)
-    msg('!')
+    msg('!', least_debug=1)
     for text_block in article_blocks:
-        msg('.')
+        msg('.', least_debug=1)
         text_block.sort_tboxes()
-    msgn('!')
+    msgn('!', least_debug=1)
 #    pprint(article_blocks)
     return article_blocks
 
@@ -589,6 +650,11 @@ def print_text_blocks(text_blocks):
     for block in text_blocks:
         print(options.block_separator)
         print(block.get_text())
+
+def unescape_string(s):
+    "replace (some) escape sequences in the string with the corresponding characters"
+    r = s.replace(r'\n', '\n').replace(r'\t', '\t')
+    return r
 
 # main
 def main(argv):
@@ -756,10 +822,29 @@ def main(argv):
                        default='',
                        help='String to put after each heading, e.g. </h1>')
 
+    parser.add_argument('--box-separator', dest='box_separator', action='store',
+                       type=str,
+                       default=r'\n',
+                       help=r'Separate boxes with this string. Use \n for new line, \t for TAB, other escape sequences are not recognized.')
+
     parser.add_argument('--block-separator', dest='block_separator', action='store',
                        type=str,
                        default=r'\n',
-                       help=r'Separate blocks with this string. Use \n for new line, other escape sequences are not recognized.')
+                       help=r'Separate blocks with this string. Use \n for new line, \t for TAB, other escape sequences are not recognized.')
+
+    parser.add_argument('--indent-separator', dest='indent_separator', action='store',
+                       type=str,
+                       default=r'\n\n\t',
+                       help=r'Separate indented lines with this string. Use \n for new line, \t for TAB, other escape sequences are not recognized.')
+
+    parser.add_argument('--indent-limit', dest='indent_limit', action='store',
+                       type=float,
+                       default=3,
+                       help='If the line is indented more then this (approximately characters), it will separated by --indent-separator from the previous one.')
+
+    parser.add_argument('--norm-whitespace', dest='norm_whitespace', action='store_true',
+                       default=False,
+                       help='Normalize whitespace (remove duplicate spaces, replace end of lines with spaces).')
 
 
 
@@ -800,7 +885,10 @@ def main(argv):
     codec = args.codec
     scale = args.scale
 
-    args.block_separator = args.block_separator.replace(r'\n', '\n')
+    args.box_separator = unescape_string(args.box_separator)
+    args.block_separator = unescape_string(args.block_separator)
+    args.indent_separator = unescape_string(args.indent_separator)
+
 
     global options
     options = args
