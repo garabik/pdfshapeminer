@@ -7,6 +7,7 @@ import sys
 from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 import random, copy, re, unicodedata
 from math import atan2, pi, sqrt, fsum
+import numpy
 
 from pprint import pprint
 
@@ -245,26 +246,16 @@ class ShapedTextBox:
         linewidth = abs(tline.x1 - tline.x0)
 
         neighbours = [l for l in self.textlines[i-2:i]+self.textlines[i+1:i+3] if abs(l.y0-tline.y0) < lineheight*3]
-        if not neighbours:
+        if len(neighbours)<=1:
             return False
         # calculate mean and variance
         data = [tline.x0-l.x0 for l in neighbours]
-        sumx0 = fsum(data)
-        n = len(neighbours)
-        ss = sum(x**2 for x in data) - (sumx0**2)/n
-        if n==1:
-#            print('111', tline.get_text())
-            return False
-        var = ss/(n-1)
-        if isclose(var, 0):
-            var = 0
-        stdevx0 = sqrt(var)
-        mean_indent = sumx0/n
+        mean_indent = numpy.mean(data)
+        stdevx0 = numpy.std(data, ddof=1)
         charwidth = linewidth/len(text)
         if stdevx0 <= 0.5*mean_indent and mean_indent > options.indent_limit:
             return True
         return False
-        #print('fff', mean, stdevx0, tline.get_text())
 
     def get_text(self):
         paragraphs = []
@@ -382,13 +373,20 @@ class TextBlock:
 
     def stats(self):
         # return some statistics:
-        # nr. of chunks, avg width, stdev width, avg height, stdev height
-        nrchunks = len(self.textboxes)
+        # avg nr of textlines per textbox, stdev
+        data = [ len(tbox.textlines) for tbox in self.textboxes ]
+        assert data
+        avg_textlines = numpy.mean(data)
+        std_textlines = numpy.std(data)
+        #nr_textlines = sum(len(tbox.textlines) for tbox in self.textboxes)
+        nr_textboxes = len(data)
+        return nr_textboxes, avg_textlines, std_textlines
+        nrboxes = len(self.textboxes)
         avgwidth = numpy.mean( [t.right-t.left for t in self.textboxes] )
         stdevwidth = numpy.std( [t.right-t.left for t in self.textboxes] )
         avgheight = numpy.mean( [t.height for t in self.textboxes] )
         stdevheight = numpy.std( [t.height for t in self.textboxes] )
-        return nrchunks, avgwidth, stdevwidth, avgheight, stdevheight
+        return nrboxes, avgwidth, stdevwidth, avgheight, stdevheight
 
     def get_text(self):
         r = ''
@@ -487,14 +485,35 @@ class ShapeTextConverter(TextConverter):
             self.write_text(options.block_separator)
             self.write_text(block.get_text())
 
+    def _clean_text(self, text):
+        "replace nonprintable characters"
+        r = ''
+        for c in text:
+            if ord(c)<32 or unicodedata.category(c)[0] not in 'LMNP':
+                r += '_'
+            else:
+                r += c
+        return r
+
+    def print_stats(self, text_blocks):
+        for block in text_blocks:
+            text = self._clean_text(block.get_text()[:20])
+            self.write_text('\t'.join(str(x) for x in block.stats()))
+            self.write_text('\t'); self.write_text(text)
+            self.write_text('\n')
+
     def close(self):
         "print text here, at the end"
-        textboxes = get_text_boxes(self.textlines)
-        textblocks = get_text_blocks(textboxes)
         if options.draw_lines:
             plotitems(self.textlines)
+
+        textboxes = get_text_boxes(self.textlines)
+
         if options.draw_boxes:
             plottextboxes(textboxes)
+
+        textblocks = get_text_blocks(textboxes)
+
         if options.draw_blocks:
             plottextblocks(textblocks)
         if options.print_stats:
@@ -846,7 +865,7 @@ def main(argv):
 
     parser.add_argument('--block-separator', dest='block_separator', action='store',
                        type=str,
-                       default=r'\n',
+                       default=r'\n\n',
                        help=r'Separate blocks with this string. Use \n for new line, \t for TAB, other escape sequences are not recognized.')
 
     parser.add_argument('--indent-separator', dest='indent_separator', action='store',
