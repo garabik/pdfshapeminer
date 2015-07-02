@@ -294,6 +294,7 @@ class ShapedTextBox:
             txt = options.heading_before + txt + options.heading_after
         return txt
 
+
     def __repr__(self):
         return ('<%s(%s)>' %
                 (self.__class__.__name__,self.textlines))
@@ -411,7 +412,7 @@ class ShapeTextConverter(TextConverter):
         return
 
     def write_text(self, text):
-        #self.outfp.write(text.encode(self.codec, 'ignore'))
+        self.outfp.write(text.encode(self.codec, 'ignore'))
         return
 
     def receive_layout(self, ltpage):
@@ -439,7 +440,7 @@ class ShapeTextConverter(TextConverter):
             elif isinstance(item, LTText):
                 item_text = item.get_text()
                 r += item_text
-                self.write_text(item.get_text())
+                #self.write_text(item.get_text())
                 if isinstance(item, LTChar):
                     a,b,c,d,x,y = item.matrix
                     phi1 = atan2(c,d)
@@ -455,7 +456,7 @@ class ShapeTextConverter(TextConverter):
                         reject = True
             if isinstance(item, LTTextBox):
                 r += '\n'
-                self.write_text('\n')
+                #self.write_text('\n')
             elif isinstance(item, LTImage):
                 if self.imagewriter is not None:
                     self.imagewriter.export_image(item)
@@ -463,6 +464,7 @@ class ShapeTextConverter(TextConverter):
 
         if self.showpageno:
             self.write_text('Page %s\n' % ltpage.pageid)
+            DEBUG(1, 'Page', ltpage.pageid)
         render(ltpage)
         msgn(least_debug=2)
         self.write_text('\f')
@@ -479,6 +481,26 @@ class ShapeTextConverter(TextConverter):
 
     def paint_path(self, gstate, stroke, fill, evenodd, path):
         return
+
+    def print_text_blocks(self, text_blocks):
+        for block in text_blocks:
+            self.write_text(options.block_separator)
+            self.write_text(block.get_text())
+
+    def close(self):
+        "print text here, at the end"
+        textboxes = get_text_boxes(self.textlines)
+        textblocks = get_text_blocks(textboxes)
+        if options.draw_lines:
+            plotitems(self.textlines)
+        if options.draw_boxes:
+            plottextboxes(textboxes)
+        if options.draw_blocks:
+            plottextblocks(textblocks)
+        if options.print_stats:
+            self.print_stats(textblocks)
+        else:
+            self.print_text_blocks(textblocks)
 
 
 def get_text_boxes(textlines):
@@ -645,11 +667,6 @@ def get_text_blocks(text_boxes):
     msgn('!', least_debug=1)
 #    pprint(article_blocks)
     return article_blocks
-
-def print_text_blocks(text_blocks):
-    for block in text_blocks:
-        print(options.block_separator)
-        print(block.get_text())
 
 def unescape_string(s):
     "replace (some) escape sequences in the string with the corresponding characters"
@@ -846,7 +863,9 @@ def main(argv):
                        default=False,
                        help='Normalize whitespace (remove duplicate spaces, replace end of lines with spaces).')
 
-
+    parser.add_argument('--print-stats', dest='print_stats', action='store_true',
+                       default=False,
+                       help='Instead of the text, output some simple statistics about the file.')
 
     args, rest = parser.parse_known_args()
 
@@ -940,16 +959,7 @@ def main(argv):
             interpreter.process_page(page)
         fp.close()
     device.close()
-    textboxes = get_text_boxes(device.textlines)
 
-    textblocks = get_text_blocks(textboxes)
-    if args.draw_lines:
-        plotitems(device.textlines)
-    if args.draw_boxes:
-        plottextboxes(textboxes)
-    if args.draw_blocks:
-        plottextblocks(textblocks)
-    print_text_blocks(textblocks)
     outfp.close()
     return
 
