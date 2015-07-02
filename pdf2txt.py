@@ -886,6 +886,8 @@ def main(argv):
                        default=False,
                        help='Instead of the text, output some simple statistics about the file.')
 
+    parser.add_argument(dest='pdffile', help='List of PDF files to go through', default=None, nargs='+')
+
     args, rest = parser.parse_known_args()
 
     global debuglevel
@@ -968,7 +970,7 @@ def main(argv):
         device = TagExtractor(rsrcmgr, outfp, codec=codec)
     else:
         return usage()
-    for fname in rest:
+    for fname in options.pdffile:
         fp = file(fname, 'rb')
         interpreter = PDFPageInterpreter(rsrcmgr, device)
         for page in PDFPage.get_pages(fp, pagenos,
