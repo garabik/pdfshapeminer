@@ -54,7 +54,7 @@ def msgr(*s, **kw):
         msg('       \r')
 
 
-SIZE = (20, 20)
+SIZE = (10, 10)
 
 def plot_coords(ax, xs, ys, color):
     ax.fill(xs, ys, color)
@@ -70,7 +70,7 @@ def plotitems(items):
         x0, x1, y0, y1 = item.x0, item.x1, item.y0, item.y1
         text = item.get_text()[:10]
         plot_coords(ax, [x0, x1, x1, x0], [y0, y0, y1, y1], color)
-        ax.text(x0, y0, text, fontsize=6)
+        ax.text(x0, y0, text, fontsize=8)
 
     pyplot.show()
 
@@ -85,7 +85,7 @@ def plottextboxes(boxes):
             x0, x1, y0, y1 = item.x0, item.x1, item.y0, item.y1
             text = item.get_text()[:10]
             plot_coords(ax, [x0, x1, x1, x0], [y0, y0, y1, y1], color)
-            ax.text(x0, y0, text, fontsize=6)
+            ax.text(x0, y0, text, fontsize=8)
 
     pyplot.show()
 
@@ -101,7 +101,7 @@ def plottextblocks(blocks):
                 x0, x1, y0, y1 = item.x0, item.x1, item.y0, item.y1
                 text = item.get_text()[:10]
                 plot_coords(ax, [x0, x1, x1, x0], [y0, y0, y1, y1], color)
-                ax.text(x0, y0, text, fontsize=6)
+                ax.text(x0, y0, text, fontsize=8)
 
     pyplot.show()
 
@@ -483,6 +483,7 @@ class ShapeTextConverter(TextConverter):
     def print_text_blocks(self, text_blocks):
         for block in text_blocks:
             self.write_text(options.block_separator)
+            #self.write_text(str(block.bounds))
             self.write_text(block.get_text())
 
     def _clean_text(self, text):
@@ -502,6 +503,13 @@ class ShapeTextConverter(TextConverter):
             self.write_text('\t'); self.write_text(text)
             self.write_text('\n')
 
+    def sort_textblocks(self, text_blocks):
+        text_blocks.sort(key=lambda block:
+                            (1-options.boxes_flow)*(block.shape.bounds[0]) -
+                            (1+options.boxes_flow)*(block.shape.bounds[1]+block.shape.bounds[3])
+                        )
+
+
     def close(self):
         "print text here, at the end"
         if options.draw_lines:
@@ -513,6 +521,7 @@ class ShapeTextConverter(TextConverter):
             plottextboxes(textboxes)
 
         textblocks = get_text_blocks(textboxes)
+        self.sort_textblocks(textblocks)
 
         if options.draw_blocks:
             plottextblocks(textblocks)
@@ -574,7 +583,6 @@ def get_text_boxes(textlines):
         if debuglevel>=2:
             msgn(least_debug=2)
     textboxes = sorted(textboxes, key=lambda x:x.shape.bounds[3], reverse=True)
-
     return textboxes
 
 def get_avg_lineheight(text_boxes):
@@ -610,11 +618,12 @@ def get_text_blocks(text_boxes):
             tc.heading = False
             i += 1
 
-
+    #pprint(text_boxes_c)
+    #pprint(article_blocks)
     msg('!', least_debug=1)
     process_article_blocks = copy.copy(article_blocks)
 
-    text_boxes_remaining = set(text_boxes)
+    text_boxes_remaining = set(text_boxes_c)
     text_boxes_remaining = list(text_boxes_remaining)
 
     while text_boxes_remaining:
