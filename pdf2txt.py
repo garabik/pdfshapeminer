@@ -324,7 +324,7 @@ class TextBlock:
 
     def get_next_tbox(self, tbox, leftover):
         "find the nearest most appropriate text chunk from the list leftover"
-        threshold = 0.5 # consider only chunks closer vertically than this (ratio of downward candidate text height)
+        threshold = 1 # consider only chunks closer vertically than this (ratio of downward candidate line height)
         candidates = (x for x in leftover if tbox.shape.distance(x.shape)<x.avg_lineheight()*threshold)
         candidates_below = [x for x in candidates if tbox.shape.bounds[1]>x.shape.bounds[1]]
         #pprint(candidates_below)
@@ -599,6 +599,30 @@ def get_avg_lineheight(text_boxes):
 
 
 def get_text_blocks(text_boxes):
+
+    def group_boxes(initial_block, text_boxes, text_boxes_remaining):
+        "text_boxes_remaining is modified"
+        ab_left, ab_bottom, ab_right, ab_top = initial_block.bounds
+        bottom = ab_bottom
+        while bottom >=0: # LOOP #1
+            bottom -= 3
+            newbox = shapely.geometry.box(ab_left, bottom, ab_right, ab_top)
+            i = 0
+            while i < len(text_boxes):
+                tc = text_boxes[i]
+                if tc.shape.bounds[1] > ab_bottom or tc in initial_block.textboxes:
+                    # boxes above our header
+                    i += 1
+                    continue
+                if tc.shape.intersects(newbox):
+                    if tc.heading:
+                        bottom = -1
+                        break
+                    elif tc in text_boxes_remaining:
+                        initial_block.append(tc)
+                        text_boxes_remaining.remove(tc)
+                i += 1
+
     avg_lineheight = get_avg_lineheight(text_boxes)
     article_blocks = []
     text_boxes_in_article_blocks = set() # keep track of already assigned text boxes
@@ -617,16 +641,64 @@ def get_text_blocks(text_boxes):
         else:
             tc.heading = False
             i += 1
+    # at this point, article_blocks cointains all the headings and nothing else
 
     #pprint(text_boxes_c)
     #pprint(article_blocks)
     msg('!', least_debug=1)
-    process_article_blocks = copy.copy(article_blocks)
 
     text_boxes_remaining = set(text_boxes_c)
+    text_boxes.sort(key=lambda x: -x.shape.bounds[1]) # sort by bottom coordinate
+
+    for tblock in article_blocks:
+        group_boxes(tblock, text_boxes, text_boxes_remaining)
+        msg('.', least_debug=1)
+    del tblock
+
     text_boxes_remaining = list(text_boxes_remaining)
 
     while text_boxes_remaining:
+        # find leftmost top of remaining text boxes (those without heading)
+        # with some left-right fuzzyness to allow for uneven left margins
+        leftmost = text_boxes_remaining[0]
+        leftmost_index = 0
+        for i in range(1, len(text_boxes_remaining)):
+            tc = text_boxes_remaining[i]
+            tc_width = tc.shape.bounds[2] - tc.shape.bounds[0]
+            leftmost_width = leftmost.shape.bounds[2] - leftmost.shape.bounds[0]
+            assert tc_width > 0
+            assert leftmost_width > 0
+
+            # if the new box is more than 10% of the smaller of (new_box, old_box) from
+            # the old position, let it be the leftmost one
+            if tc.shape.bounds[0] < leftmost.shape.bounds[0] - 0.1*min(tc_width, leftmost_width):
+                leftmost = tc
+                leftmost_index = i
+            # if it is withing 10%, use the higher placed one
+            elif abs(tc.shape.bounds[0] - leftmost.shape.bounds[0]) < 0.1*min(tc_width, leftmost_width):
+                if tc.shape.bounds[3] > leftmost.shape.bounds[3]:
+                    leftmost = tc
+                    leftmost_index = i
+
+        tblock = TextBlock()
+        tblock.append(leftmost)
+        del text_boxes_remaining[leftmost_index]
+        group_boxes(tblock, text_boxes, text_boxes_remaining)
+        article_blocks.append(tblock)
+      
+#    for tbox in text_boxes_remaining:
+#        a = TextBlock()
+#        a.append(tbox)
+#        article_blocks.append(a)
+    '''
+
+    process_article_blocks = copy.copy(article_blocks)
+
+    text_boxes_remaining = set(text_boxes)
+    text_boxes_remaining = list(text_boxes_remaining)
+
+    while text_boxes_remaining:
+        #print('fasz', text_boxes_remaining)
         msg('.', least_debug=1)
         # now, add to each TextBlock everything that is below, until another heading is encountered
 
@@ -652,12 +724,14 @@ def get_text_blocks(text_boxes):
                             break
                         else:
                             tc.heading = False
-                            ab.append(tc)
-                            text_boxes_in_article_blocks.add(tc)
+                            if tc not in text_boxes_in_article_blocks:
+                                ab.append(tc)
+                                text_boxes_in_article_blocks.add(tc)
                             del text_boxes_remaining[i]
                     else:
                         i += 1
-
+        pprint(text_boxes_in_article_blocks)
+    
         text_boxes_remaining = set(text_boxes_remaining) - text_boxes_in_article_blocks
         text_boxes_remaining = list(text_boxes_remaining)
         if not text_boxes_remaining:
@@ -688,6 +762,7 @@ def get_text_blocks(text_boxes):
         a.append(leftmost)
         article_blocks.append(a)
         text_boxes_in_article_blocks.add(leftmost)
+    '''
     msg('!', least_debug=1)
     for text_block in article_blocks:
         msg('.', least_debug=1)
@@ -869,7 +944,7 @@ def main(argv):
 
     parser.add_argument('--box-separator', dest='box_separator', action='store',
                        type=str,
-                       default=r'\n',
+                       default=r'\n\n',
                        help=r'Separate boxes with this string. Use \n for new line, \t for TAB, other escape sequences are not recognized.')
 
     parser.add_argument('--block-separator', dest='block_separator', action='store',
