@@ -406,7 +406,8 @@ class ShapeTextConverter(TextConverter):
         TextConverter.__init__(self, rsrcmgr, outfp, codec=codec, pageno=pageno, laparams=laparams)
         self.showpageno = showpageno
         self.imagewriter = imagewriter
-        self.textlines = []
+        self.textlines = {} # per pagenumber
+        self.pagenumber = 0
         return
 
     def write_text(self, text):
@@ -414,7 +415,7 @@ class ShapeTextConverter(TextConverter):
         return
 
     def receive_layout(self, ltpage):
-        def render(item):
+        def render(item, pagenumber):
             reject = False
             r = ''
             if isinstance(item, LTTextLine):
@@ -422,17 +423,19 @@ class ShapeTextConverter(TextConverter):
                 linestr = ''
                 reject = False
                 for child in item:
-                    child_text, child_status = render(child)
+                    child_text, child_status = render(child, pagenumber)
                     if not child_status: #this signals rejection
                         reject = True
                     linestr += child_text
                 if not reject:
-                    self.textlines.append(item)
+                    if pagenumber not in self.textlines:
+                        self.textlines[pagenumber] = []
+                    self.textlines[pagenumber].append(item)
                 else:
                     DEBUG(1, 'REJECTED:', linestr)
             elif isinstance(item, LTContainer):
                 for child in item:
-                    child_text, child_status = render(child)
+                    child_text, child_status = render(child, pagenumber)
                     if child_status:
                         r += child_text
             elif isinstance(item, LTText):
@@ -462,10 +465,10 @@ class ShapeTextConverter(TextConverter):
 
         if self.showpageno:
             self.write_text('Page %s\n' % ltpage.pageid)
-            DEBUG(1, 'Page', ltpage.pageid)
-        render(ltpage)
+        DEBUG(1, 'Page', ltpage.pageid)
+        render(ltpage, self.pagenumber)
+        self.pagenumber += 1
         msgn(least_debug=2)
-        self.write_text('\f')
         return
 
     # Some dummy functions to save memory/CPU when all that is wanted
@@ -483,8 +486,8 @@ class ShapeTextConverter(TextConverter):
     def print_text_blocks(self, text_blocks):
         for block in text_blocks:
             self.write_text(options.block_separator)
-            #self.write_text(str(block.bounds))
             self.write_text(block.get_text())
+        self.write_text(options.page_separator)
 
     def _clean_text(self, text):
         "replace nonprintable characters"
@@ -509,26 +512,28 @@ class ShapeTextConverter(TextConverter):
                             (1+options.boxes_flow)*(block.shape.bounds[1]+block.shape.bounds[3])
                         )
 
-
     def close(self):
         "print text here, at the end"
-        if options.draw_lines:
-            plotitems(self.textlines)
 
-        textboxes = get_text_boxes(self.textlines)
+        pages = sorted(self.textlines.keys())
+        for page in pages:
+           if options.draw_lines:
+               plotitems(self.textlines[page])
 
-        if options.draw_boxes:
-            plottextboxes(textboxes)
+           textboxes = get_text_boxes(self.textlines[page])
 
-        textblocks = get_text_blocks(textboxes)
-        self.sort_textblocks(textblocks)
+           if options.draw_boxes:
+               plottextboxes(textboxes)
 
-        if options.draw_blocks:
-            plottextblocks(textblocks)
-        if options.print_stats:
-            self.print_stats(textblocks)
-        else:
-            self.print_text_blocks(textblocks)
+           textblocks = get_text_blocks(textboxes)
+           self.sort_textblocks(textblocks)
+
+           if options.draw_blocks:
+               plottextblocks(textblocks)
+           if options.print_stats:
+               self.print_stats(textblocks)
+           else:
+               self.print_text_blocks(textblocks)
 
 
 def get_text_boxes(textlines):
@@ -685,11 +690,6 @@ def get_text_blocks(text_boxes):
         del text_boxes_remaining[leftmost_index]
         group_boxes(tblock, text_boxes, text_boxes_remaining)
         article_blocks.append(tblock)
-      
-#    for tbox in text_boxes_remaining:
-#        a = TextBlock()
-#        a.append(tbox)
-#        article_blocks.append(a)
     '''
 
     process_article_blocks = copy.copy(article_blocks)
@@ -796,7 +796,7 @@ def main(argv):
     pageno = 1
     scale = 1
     caching = True
-    showpageno = True
+    showpageno = False
     laparams = LAParams()
     using_optparse = False
 
@@ -853,6 +853,10 @@ def main(argv):
                        default=True,
                        help='Suppress layout analysis.')
 
+    parser.add_argument('--show-pageno', dest='show_pageno', action='store_true',
+                       default=False,
+                       help='Show page numbers.')
+
 
     parser.add_argument('-A', '--analyze-all', dest='all_texts', action='store_true',
                        default=False,
@@ -881,7 +885,6 @@ def main(argv):
                        type=float,
                        default=0.5,
                        help='Specifies how much a horizontal and vertical position of a text matters when determining a text order. The value should be within the range of -1.0 (only horizontal position matters) to +1.0 (only vertical position matters).')
-
 
     parser.add_argument('-Y', '--layout-mode', dest='layoutmode', action='store',
                        type=str,
@@ -962,6 +965,11 @@ def main(argv):
                        default=3,
                        help='If the line is indented more then this (approximately characters), it will separated by --indent-separator from the previous one.')
 
+    parser.add_argument('--page-separator', dest='page_separator', action='store',
+                       type=str,
+                       default=r'\n\n',
+                       help=r'Separate pages with this string. Use \n for new line, \t for TAB, other escape sequences are not recognized.')
+
     parser.add_argument('--norm-whitespace', dest='norm_whitespace', action='store_true',
                        default=False,
                        help='Normalize whitespace (remove duplicate spaces, replace end of lines with spaces).')
@@ -987,6 +995,7 @@ def main(argv):
     outfile = args.outfile
     password = args.password
     caching = args.caching
+    showpageno = args.show_pageno
     if not args.layout:
         laparams = None
     if laparams and args.all_texts:
@@ -1012,6 +1021,8 @@ def main(argv):
     args.box_separator = unescape_string(args.box_separator)
     args.block_separator = unescape_string(args.block_separator)
     args.indent_separator = unescape_string(args.indent_separator)
+    args.page_separator = unescape_string(args.page_separator)
+
 
 
     global options
@@ -1038,7 +1049,7 @@ def main(argv):
         outfp = sys.stdout
     if outtype == 'shape':
         device = ShapeTextConverter(rsrcmgr, outfp, codec=codec, laparams=laparams,
-                               imagewriter=imagewriter)
+                               showpageno=showpageno, imagewriter=imagewriter)
     elif outtype == 'text':
         device = TextConverter(rsrcmgr, outfp, codec=codec, laparams=laparams,
                                imagewriter=imagewriter)
