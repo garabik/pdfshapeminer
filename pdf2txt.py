@@ -658,7 +658,6 @@ def get_text_blocks(text_boxes):
     for tblock in article_blocks:
         group_boxes(tblock, text_boxes, text_boxes_remaining)
         msg('.', least_debug=1)
-    del tblock
 
     text_boxes_remaining = list(text_boxes_remaining)
 
@@ -1045,8 +1044,10 @@ def main(argv):
                 outtype = 'tag'
     if outfile:
         outfp = file(outfile, 'w')
+        DEBUG(2, 'output goes to', outfile)
     else:
         outfp = sys.stdout
+        DEBUG(2, 'output goes to stdout')
     if outtype == 'shape':
         device = ShapeTextConverter(rsrcmgr, outfp, codec=codec, laparams=laparams,
                                showpageno=showpageno, imagewriter=imagewriter)
@@ -1066,6 +1067,7 @@ def main(argv):
     else:
         return usage()
     for fname in options.pdffile:
+        DEBUG(2, 'processing', fname)
         fp = file(fname, 'rb')
         interpreter = PDFPageInterpreter(rsrcmgr, device)
         for page in PDFPage.get_pages(fp, pagenos,
