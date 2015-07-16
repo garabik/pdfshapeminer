@@ -568,17 +568,21 @@ def get_text_boxes(textlines):
                     (i!=j) and
                     # riadky maju podobnu vysku
                     abs(lineheight1 - lineheight2) / ((lineheight1 + lineheight2)/2) < options.line_height_diff and
-                    # bloky sa vertikalne prekryvaju alebo su blizko k sebe
-                    (
-                        (bottom2-mls <= bottom1 <= top2+mls) or (bottom1-mls <= bottom2 <= top1+mls)
-                    ) and
-                    (
-                        box1.shape.distance(box2.shape) < mcs
-                    ) and
+                    ( 
+                      (
+                        # bloky sa vertikalne prekryvaju alebo su blizko k sebe
+                        (
+                            (bottom2-mls <= bottom1 <= top2+mls) or (bottom1-mls <= bottom2 <= top1+mls)
+                        ) and
+                        (
+                            box1.shape.distance(box2.shape) < mcs
+                        ) and
 
-                    # bloky sa horizontalne prekryvaju
-                    ( (left2 <= left1 <= right2) or (left1 <= left2 <= right1) )
-                    ):
+                        # bloky sa horizontalne prekryvaju
+                        ( (left2 <= left1 <= right2) or (left1 <= left2 <= right1) )
+                      ) or box1.shape.intersects(box2.shape)
+                    )
+                   ):
                     box1.add(box2)
                     del textboxes[j]
                     reduced = True
@@ -1079,6 +1083,8 @@ def main(argv):
     device.close()
 
     outfp.close()
+    DEBUG(2, 'finished.')
+
     return
 
 if __name__ == '__main__':
