@@ -130,8 +130,7 @@ def is_uppercase(c):
 def is_letter(c):
     return unicodedata.category(c)[0] in 'L'
 
-def fixhyp(txt):
-    lines = txt.splitlines()
+def fixhyp(lines):
     newlines = [lines[0]]
     for l in lines[1:]:
         prevline = newlines[-1]
@@ -139,7 +138,11 @@ def fixhyp(txt):
             newlines[-1] = prevline[:-1] + l
         else:
             newlines.append(l)
-    return '\n'.join(newlines)
+    return newlines
+
+def fixhyp_text(txt):
+    lines = txt.splitlines()
+    return '\n'.join(fixhyp(lines))
 
 def isclose(a,b, atol=1e-05, rtol=1e-05):
     'test if two floats are "close"'
@@ -263,7 +266,7 @@ class ShapedTextBox:
         for i, tline in enumerate(self.textlines):
             if self._is_indented(i):
                 if paragraph:
-                    p = fixhyp(
+                    p = fixhyp_text(
                             fixlig(paragraph)
                             )
                     if options.norm_whitespace:
@@ -272,7 +275,7 @@ class ShapedTextBox:
                 paragraph = ''
             paragraph += tline.get_text()
         if paragraph:
-            p = fixhyp(
+            p = fixhyp_text(
                     fixlig(paragraph)
                     )
             if options.norm_whitespace:
@@ -389,7 +392,11 @@ class TextBlock:
         return nrboxes, avgwidth, stdevwidth, avgheight, stdevheight
 
     def get_text(self):
-        r = ''
+        r = []
+        for x in self.textboxes:
+            r.append(x.get_text())
+        r = fixhyp(r)
+        return options.box_separator.join(r)
         return options.box_separator.join(x.get_text() for x in self.textboxes)
 
     def __str__(self):
@@ -432,7 +439,7 @@ class ShapeTextConverter(TextConverter):
                         self.textlines[pagenumber] = []
                     self.textlines[pagenumber].append(item)
                 else:
-                    DEBUG(1, 'REJECTED:', linestr)
+                    DEBUG(1, 'REJECTED:', `linestr`)
             elif isinstance(item, LTContainer):
                 for child in item:
                     child_text, child_status = render(child, pagenumber)
