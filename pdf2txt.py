@@ -439,7 +439,7 @@ class ShapeTextConverter(TextConverter):
                         self.textlines[pagenumber] = []
                     self.textlines[pagenumber].append(item)
                 else:
-                    DEBUG(1, 'REJECTED:', `linestr`)
+                    DEBUG(1, 'REJECTED:', repr(linestr))
             elif isinstance(item, LTContainer):
                 for child in item:
                     child_text, child_status = render(child, pagenumber)
@@ -454,10 +454,10 @@ class ShapeTextConverter(TextConverter):
                     phi1 = atan2(c,d)
                     phi2 = -atan2(b,a)
                     if not isclose(phi1,phi2, atol=options.shear_limit,rtol=options.shear_limit):
-                        DEBUG(2, 'SHEAR', phi1, phi2, item_text)
+                        DEBUG(2, 'SHEAR', phi1, phi2, repr(item_text))
                         reject = True
                     if max(abs(phi1), abs(phi2)) > options.rotation_limit*pi/180:
-                        DEBUG(2, 'ROT', phi1, phi2, item_text)
+                        DEBUG(2, 'ROT', phi1, phi2, repr(item_text))
                         reject = True
                     if not isinstance(item_text, unicode):
                         DEBUG(2, 'NOT UNICODE', repr(item_text))
