@@ -51,7 +51,8 @@ def msgr(*s, **kw):
     least_debug = kw.get('least_debug', 0)
     if debuglevel >= least_debug:
         msg(*s)
-        msg('       \r')
+#        msg('       \r')
+        msg('\n')
 
 
 SIZE = (10, 10)
@@ -261,25 +262,34 @@ class ShapedTextBox:
         return False
 
     def get_text(self):
+        "retrieve text from a list of consequitive lines, paying attention to indentation"
+        "it uses indentation to separate paragraphs"
         paragraphs = []
         paragraph = ''
+        indentation = False
         for i, tline in enumerate(self.textlines):
-            if self._is_indented(i):
-                if paragraph:
+            if self._is_indented(i): # start of a new paragraph
+                if paragraph: # add the previous one to the list of paragraphs
                     p = fixhyp_text(
                             fixlig(paragraph)
                             )
                     if options.norm_whitespace:
                         p = ' '.join(p.split())
+                    if indentation:
+                        p = options.indent_string + p
                     paragraphs.append(p)
                 paragraph = ''
+                indentation = True # keep track of the indentation status (this really makes sense ooooonly for the first line)
             paragraph += tline.get_text()
+
         if paragraph:
             p = fixhyp_text(
                     fixlig(paragraph)
                     )
             if options.norm_whitespace:
                 p = ' '.join(p.split())
+            if indentation:
+                p = options.indent_string + p
             paragraphs.append(p)
 
         txt = options.indent_separator.join(paragraphs)
@@ -309,7 +319,7 @@ class ShapedTextLine:
             return getattr(self.textline, name)
 
 class TextBlock:
-    """ArticleBlock corresponds typically to a newspaper article.
+    """TextBlock corresponds typically to a newspaper article.
     It is a rectangular piece of page, containing several TextBoxes,
     typically with a heading (text in bigger font)
     """
@@ -514,10 +524,14 @@ class ShapeTextConverter(TextConverter):
             self.write_text('\n')
 
     def sort_textblocks(self, text_blocks):
+        DEBUG(4, 'sort_tboxes: Pre-sort tblocks', repr(text_blocks))
+
         text_blocks.sort(key=lambda block:
                             (1-options.boxes_flow)*(block.shape.bounds[0]) -
                             (1+options.boxes_flow)*(block.shape.bounds[1]+block.shape.bounds[3])
                         )
+        DEBUG(4, 'sort_tboxes: Postsort tblocks', repr(text_blocks))
+
 
     def close(self):
         "print text here, at the end"
@@ -526,7 +540,7 @@ class ShapeTextConverter(TextConverter):
         for page in pages:
            if options.draw_lines:
                plotitems(self.textlines[page])
-
+           DEBUG(4, 'textlines: ', repr(self.textlines[page]))
            textboxes = get_text_boxes(self.textlines[page])
 
            if options.draw_boxes:
@@ -534,12 +548,17 @@ class ShapeTextConverter(TextConverter):
 
            textblocks = get_text_blocks(textboxes)
            self.sort_textblocks(textblocks)
-
            if options.draw_blocks:
                plottextblocks(textblocks)
            if options.print_stats:
                self.print_stats(textblocks)
            else:
+               if options.max_blocks!=0 and len(textblocks)>options.max_blocks:
+                   continue
+               if options.max_textlines!=0 and any(block.stats()[0]>options.max_textlines for block in textblocks):
+                   continue
+
+
                self.print_text_blocks(textblocks)
 
 
@@ -598,7 +617,10 @@ def get_text_boxes(textlines):
             i += 1
         if debuglevel>=2:
             msgn(least_debug=2)
+    DEBUG(4, 'get_tboxes: Pre-sort tboxes', repr(textboxes))
     textboxes = sorted(textboxes, key=lambda x:x.shape.bounds[3], reverse=True)
+    DEBUG(4, 'get_tboxes: Postsort tboxes', repr(textboxes))
+
     return textboxes
 
 def get_avg_lineheight(text_boxes):
@@ -664,7 +686,10 @@ def get_text_blocks(text_boxes):
     msg('!', least_debug=1)
 
     text_boxes_remaining = set(text_boxes_c)
+#    DEBUG(4, 'get_tblocks: Pre-sort tboxes', repr(text_boxes))
     text_boxes.sort(key=lambda x: -x.shape.bounds[1]) # sort by bottom coordinate
+#    DEBUG(4, 'get_tblocks: Postsort tboxes', repr(text_boxes))
+
 
     for tblock in article_blocks:
         group_boxes(tblock, text_boxes, text_boxes_remaining)
@@ -967,8 +992,14 @@ def main(argv):
 
     parser.add_argument('--indent-separator', dest='indent_separator', action='store',
                        type=str,
-                       default=r'\n\n\t',
+                       default=r'\n\n',
                        help=r'Separate indented lines with this string. Use \n for new line, \t for TAB, other escape sequences are not recognized.')
+
+    parser.add_argument('--indent-string', dest='indent_string', action='store',
+                       type=str,
+                       default=r'\t',
+                       help=r'Put this string in front of indented lines. Use \n for new line, \t for TAB, other escape sequences are not recognized.')
+
 
     parser.add_argument('--indent-limit', dest='indent_limit', action='store',
                        type=float,
@@ -987,6 +1018,18 @@ def main(argv):
     parser.add_argument('--print-stats', dest='print_stats', action='store_true',
                        default=False,
                        help='Instead of the text, output some simple statistics about the file.')
+
+    parser.add_argument('--max-blocks', dest='max_blocks', action='store',
+                       default=0,
+                       type=int,
+                       help='If there is more than this blocks per page, do not return any text. Use to discriminate abnormal files (run --print-stats first to find out the number of boxes per "normal" file). 0 means no limit. 50 is maybe a good value.')
+
+    parser.add_argument('--max-textlines', dest='max_textlines', action='store',
+                       default=0,
+                       type=int,
+                       help='If there is more than this textlines per any block, do not return any text. Use to discriminate abnormal files (run --print-stats first to find out the number of boxes per "normal" page). 0 means no limit. 18 is maybe a good value.')
+
+
 
     parser.add_argument(dest='pdffile', help='List of PDF files to go through', default=None, nargs='+')
 
@@ -1031,6 +1074,8 @@ def main(argv):
     args.box_separator = unescape_string(args.box_separator)
     args.block_separator = unescape_string(args.block_separator)
     args.indent_separator = unescape_string(args.indent_separator)
+    args.indent_string = unescape_string(args.indent_string)
+
     args.page_separator = unescape_string(args.page_separator)
 
 
