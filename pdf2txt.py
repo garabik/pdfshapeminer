@@ -54,8 +54,8 @@ def msgr(*s, **kw):
     least_debug = kw.get('least_debug', 0)
     if debuglevel >= least_debug:
         msg(*s)
-#        msg('       \r')
-        msg('\n')
+        msg('       \r')
+#        msg('\n')
 
 def sigterm_handler(_signo, _stack_frame):
     DEBUG(1, '\nTerminated by signal.')
@@ -174,7 +174,10 @@ class ShapedTextBox:
             x0, x1, y0, y1 = obj.x0, obj.x1, obj.y0, obj.y1
             if y1-y0 < 1:
                 DEBUG(1, 'text line with negligible height, adjusting:', repr(obj))
-                y1 = y0+1
+                y1 = y0 + 1
+            if x1-x0 < 1:
+                DEBUG(1, 'text line with negligible width, adjusting:', repr(obj))
+                x1 = x0 + 1
             box = shapely.geometry.box(x0, y0, x1, y1)
             self.textlines.append(obj)
             if self.shape is None:
