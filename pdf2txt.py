@@ -164,6 +164,9 @@ class ShapedTextBox:
         if isinstance(obj, LTTextLine):
             #add a LTTextLine to the box, update shape
             x0, x1, y0, y1 = obj.x0, obj.x1, obj.y0, obj.y1
+            if y1-y0 < 1:
+                DEBUG(1, 'text line with negligible height, adjusting:', repr(obj))
+                y1 = y0+1
             box = shapely.geometry.box(x0, y0, x1, y1)
             self.textlines.append(obj)
             if self.shape is None:
@@ -525,10 +528,9 @@ class ShapeTextConverter(TextConverter):
 
     def sort_textblocks(self, text_blocks):
         DEBUG(4, 'sort_tboxes: Pre-sort tblocks', repr(text_blocks))
-
         text_blocks.sort(key=lambda block:
-                            (1-options.boxes_flow)*(block.shape.bounds[0]) -
-                            (1+options.boxes_flow)*(block.shape.bounds[1]+block.shape.bounds[3])
+                           (1-options.boxes_flow)*(block.shape.bounds[0]) -
+                           (1+options.boxes_flow)*(block.shape.bounds[1]+block.shape.bounds[3])
                         )
         DEBUG(4, 'sort_tboxes: Postsort tblocks', repr(text_blocks))
 
@@ -593,7 +595,7 @@ def get_text_boxes(textlines):
                 if (
                     (i!=j) and
                     # riadky maju podobnu vysku
-                    abs(lineheight1 - lineheight2) / ((lineheight1 + lineheight2)/2) < options.line_height_diff and
+                    abs(lineheight1 - lineheight2) < options.line_height_diff * ((lineheight1 + lineheight2)/2) and
                     ( 
                       (
                         # bloky sa vertikalne prekryvaju alebo su blizko k sebe
@@ -733,7 +735,6 @@ def get_text_blocks(text_boxes):
     text_boxes_remaining = list(text_boxes_remaining)
 
     while text_boxes_remaining:
-        #print('fasz', text_boxes_remaining)
         msg('.', least_debug=1)
         # now, add to each TextBlock everything that is below, until another heading is encountered
 
