@@ -28,6 +28,9 @@ from pdfminer.layout import LTContainer, LTText, LTTextBox, LTImage, LTTextLine,
 import shapely.geometry
 from matplotlib import pyplot
 
+import signal
+
+
 debuglevel = 0
 def DEBUG(level, *msg, **args):
     end = args.get('end', '\n')
@@ -54,6 +57,11 @@ def msgr(*s, **kw):
 #        msg('       \r')
         msg('\n')
 
+def sigterm_handler(_signo, _stack_frame):
+    DEBUG(1, '\nTerminated by signal.')
+    sys.exit(1)
+
+signal.signal(signal.SIGTERM, sigterm_handler)
 
 SIZE = (10, 10)
 
