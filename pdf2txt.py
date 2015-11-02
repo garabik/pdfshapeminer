@@ -54,11 +54,11 @@ def msgr(*s, **kw):
     least_debug = kw.get('least_debug', 0)
     if debuglevel >= least_debug:
         msg(*s)
-        msg('       \r')
-#        msg('\n')
+#        msg('       \r')
+        msg('\n')
 
 def sigterm_handler(_signo, _stack_frame):
-    DEBUG(1, '\nTerminated by signal.')
+    DEBUG(0, '\nTerminated by signal.')
     sys.exit(1)
 
 signal.signal(signal.SIGTERM, sigterm_handler)
@@ -166,6 +166,15 @@ class ShapedTextBox:
         self.textlines = [] # list of LTTextLine
         self.shape = None # shapely's shape of the box
         self.add(textline)
+        if options.line_height_method == 'bbox':
+            self.textline_height = self.textline_height_bbox
+        elif options.line_height_method == 'median':
+            self.textline_height = self.textline_height_medianchar
+        elif options.line_height_method == 'mean':
+            self.textline_height = self.textline_height_meanchar
+        else:
+            raise ValueError('Unsupported line height method '+options.line_height_method)
+
 
     def add(self, obj):
         DEBUG(3, 'add', repr(obj))
@@ -195,9 +204,37 @@ class ShapedTextBox:
             raise NotImplementedError
         self.x0, self.y0, self.x1, self.y1 = self.shape.bounds
 
+
+    def textline_height_bbox(self, textline):
+        "`classic' textline height, height of the bounding box of the line"
+        return abs(textline.y1-textline.y0)
+
+    def textline_height_meanchar(self, textline):
+        "textline height is the average height of characters"
+        "this is less sensitive to e.g. extra tall character at the beginning of line"
+        chars = [c for c in textline._objs if isinstance(c, LTChar)]
+        if chars:
+            r = numpy.mean([abs(c.y1-c.y0) for c in chars])
+            return r
+        else:
+            #fallback if there are no characters
+            return self.textline_height_bbox(textline)
+
+    def textline_height_medianchar(self, textline):
+        "textline height is the median of height of characters"
+        "this is less sensitive to e.g. extra tall character at the beginning of line"
+        chars = [c for c in textline._objs if isinstance(c, LTChar)]
+        if chars:
+            return numpy.median( [abs(c.y1-c.y0) for c in chars] )
+        else:
+            #fallback if there are no characters
+            return self.textline_height_bbox(textline)
+
+
     def avg_lineheight(self):
         "average line height"
-        avg = sum(abs(c.y1-c.y0) for c in self.textlines)/len(self.textlines)
+        s = 0
+        avg = numpy.mean( [self.textline_height(x) for x in self.textlines] )
         return avg
 
     def avg_charwidth(self):
@@ -408,12 +445,6 @@ class TextBlock:
         #nr_textlines = sum(len(tbox.textlines) for tbox in self.textboxes)
         nr_textboxes = len(data)
         return nr_textboxes, avg_textlines, std_textlines
-        nrboxes = len(self.textboxes)
-        avgwidth = numpy.mean( [t.right-t.left for t in self.textboxes] )
-        stdevwidth = numpy.std( [t.right-t.left for t in self.textboxes] )
-        avgheight = numpy.mean( [t.height for t in self.textboxes] )
-        stdevheight = numpy.std( [t.height for t in self.textboxes] )
-        return nrboxes, avgwidth, stdevwidth, avgheight, stdevheight
 
     def get_text(self):
         r = []
@@ -1012,7 +1043,6 @@ def main(argv):
                        default=r'\t',
                        help=r'Put this string in front of indented lines. Use \n for new line, \t for TAB, other escape sequences are not recognized.')
 
-
     parser.add_argument('--indent-limit', dest='indent_limit', action='store',
                        type=float,
                        default=3,
@@ -1041,6 +1071,11 @@ def main(argv):
                        type=int,
                        help='If there is more than this textlines per any block, do not return any text. Use to discriminate abnormal files (run --print-stats first to find out the number of boxes per "normal" page). 0 means no limit. 18 is maybe a good value.')
 
+    parser.add_argument('--line-height-method', dest='line_height_method', action='store',
+                       type=str,
+                       default='bbox',
+                       choices = ['bbox', 'mean', 'median'],
+                       help='Method to calculate height of line (relevant if there are characters with uneven height). bbox takes the bounding box (rectangle encompassing the line), mean the arithmetic mean of the height of all the characters, median is the median of the height of all the characters. Use mean or median if there are outlier characters, e.g. one big character at the beginning of line.')
 
 
     parser.add_argument(dest='pdffile', help='List of PDF files to go through', default=None, nargs='+')
